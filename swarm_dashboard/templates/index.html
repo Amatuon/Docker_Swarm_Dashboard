@@ -188,7 +188,7 @@
                         {% for node in nodes %}
                         <tr>
                             <td>{{ node.ID[:12] }}</td>
-                            <td>{{ node.Hostname }}</td>
+                            <td><a href="{{ url_for('node_detail', node_id=node.ID) }}">{{ node.Hostname if node.Hostname else node.ID[:12] }}</a></td>
                             <td>{{ node.Status }}</td>
                             <td>{{ node.Availability }}</td>
                             <td>{{ node.ManagerStatus if node.ManagerStatus else '-' }}</td>
