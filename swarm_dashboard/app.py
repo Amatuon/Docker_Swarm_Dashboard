@@ -1,5 +1,5 @@
 from flask import Flask, render_template, redirect, url_for, flash
-from docker_utils import get_services, get_nodes, get_service_tasks, scale_service # Import all utils
+from docker_utils import get_services, get_nodes, get_service_tasks, scale_service, get_node_details, get_tasks_on_node, update_node_availability # Import all utils
 
 app = Flask(__name__)
 app.secret_key = 'your_very_secret_key' # Needed for flash messages
@@ -82,6 +82,35 @@ def scale_service_route(service_id, direction):
         flash(f"Error scaling service {target_service.get('Name')}: {message}", "error")
 
     return redirect(url_for('dashboard'))
+
+@app.route('/node/<node_id>')
+def node_detail(node_id):
+    node_details = get_node_details(node_id) # Use the new function
+    if not node_details:
+        flash(f"Node ID {node_id} not found or details unavailable.", "error")
+        return redirect(url_for('dashboard'))
+
+    node_tasks = get_tasks_on_node(node_id) # Use the new function
+
+    return render_template('node_detail.html', node=node_details, tasks=node_tasks)
+
+# START_SET_AVAILABILITY_ROUTE_MARKER
+@app.route('/node/set_availability/<node_id>/<string:availability_action>', methods=['POST'])
+def set_node_availability(node_id, availability_action):
+    # Explicitly check allowed actions, though docker_utils also does.
+    if availability_action not in ['active', 'pause', 'drain']:
+        flash(f"Invalid availability action specified: {availability_action}.", "error")
+        return redirect(url_for('node_detail', node_id=node_id))
+
+    # Ensure update_node_availability is imported from docker_utils
+    success, message = update_node_availability(node_id, availability_action)
+
+    if success:
+        flash(message, "success")
+    else:
+        flash(message, "error")
+    return redirect(url_for('node_detail', node_id=node_id))
+# END_SET_AVAILABILITY_ROUTE_MARKER
 
 if __name__ == '__main__':
     # It's good practice to make host and port configurable, e.g., via environment variables

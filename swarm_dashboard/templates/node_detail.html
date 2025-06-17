@@ -1,0 +1,80 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node: {{ node.Description.Hostname if node and node.Description else 'N/A' }}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;margin:0;padding:0;background-color:#f0f2f5;color:#333;line-height:1.6}
+.navbar{background-color:#007BFF;padding:1rem;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.navbar h1{margin:0;font-size:1.5rem;color:#fff}.navbar a.nav-link{padding:8px 15px;background-color:#0056b3;color:#fff;text-decoration:none;border-radius:5px;transition:background-color .3s ease}
+.navbar a.nav-link:hover{background-color:#004085}
+.container{width:90%;max-width:1200px;margin:20px auto;background-color:#fff;padding:25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
+h2{color:#005A9C;border-bottom:2px solid #007BFF;padding-bottom:10px;margin-top:30px;margin-bottom:20px}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-bottom:20px}
+.detail-item{background-color:#f8f9fa;padding:15px;border-radius:5px;border:1px solid #e9ecef}.detail-item strong{display:block;color:#005A9C;margin-bottom:5px}
+.table-wrapper{overflow-x:auto}table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th,td{padding:10px 12px;border:1px solid #ddd;text-align:left;vertical-align:middle}th{background-color:#007BFF;color:#fff;font-weight:700}
+tr:nth-child(even){background-color:#f8f9fa}tr:hover{background-color:#e9ecef}
+.flash-messages{list-style:none;padding:0;margin:0 0 20px}.flash-messages li{padding:12px 15px;margin-bottom:10px;border-radius:5px;border-left-width:6px;border-left-style:solid}
+.flash-messages .info{background-color:#e7f3fe;border-left-color:#2196F3;color:#0d47a1}.flash-messages .success{background-color:#d4edda;border-left-color:#28a745;color:#155724}
+.flash-messages .error{background-color:#f8d7da;border-left-color:#dc3545;color:#721c24}
+.footer{text-align:center;margin-top:30px;padding:15px;font-size:.9em;color:#777}
+.label-list{list-style:none;padding:0}.label-list li{background-color:#e0e0e0;color:#333;padding:3px 8px;margin-right:5px;margin-bottom:5px;border-radius:3px;display:inline-block;font-size:.9em}
+.actions-form button { padding: 8px 15px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; transition: background-color 0.2s ease; }
+.actions-form button.drain { background-color: #ffc107; color: #333; }
+.actions-form button.pause { background-color: #fd7e14; }
+.actions-form button.active { background-color: #28a745; }
+.actions-form button:hover { opacity: 0.9; }
+</style></head><body>
+<div class="navbar"><h1>Node: {{ node.Description.Hostname if node and node.Description else 'N/A' }}</h1><a href="{{ url_for('dashboard') }}" class="nav-link">Back to Dashboard</a></div>
+<div class="container">
+{% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<ul class="flash-messages">{% for category, message in messages %}<li class="{{ category }}">{{ message }}</li>{% endfor %}</ul>{% endif %}{% endwith %}
+{% if node %}
+<h2>Node Overview (ID: {{ node.ID[:12] }})</h2>
+<div class="detail-grid">
+    <div class="detail-item"><strong>Hostname:</strong> {{ node.Description.Hostname if node.Description else 'N/A' }}</div>
+    <div class="detail-item"><strong>ID:</strong> {{ node.ID }}</div>
+    <div class="detail-item"><strong>Status:</strong> {{ node.Status.State | capitalize if node.Status else 'N/A' }}</div>
+    <div class="detail-item"><strong>Availability:</strong> {{ node.Spec.Availability | capitalize if node.Spec else 'N/A' }}</div>
+    <div class="detail-item"><strong>Manager Status:</strong> {% if node.ManagerStatus %}{{ 'Manager' if node.ManagerStatus.IsManager else 'Worker' }}{% if node.ManagerStatus.IsManager %} ({{ node.ManagerStatus.Reachability | capitalize }}){% endif %}{% else %}-{% endif %}</div>
+    <div class="detail-item"><strong>Engine Version:</strong> {{ node.Description.EngineVersion if node.Description else 'N/A' }}</div>
+    <div class="detail-item"><strong>OS:</strong> {{ node.Description.Platform.OS if node.Description and node.Description.Platform else 'N/A' }}</div>
+    <div class="detail-item"><strong>Architecture:</strong> {{ node.Description.Platform.Architecture if node.Description and node.Description.Platform else 'N/A' }}</div>
+</div>
+<h2>Labels</h2>
+{% if node.Spec and node.Spec.Labels and node.Spec.Labels.items()|length > 0 %}<ul class="label-list">{% for key, value in node.Spec.Labels.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul>
+{% else %}<p>No labels for this node.</p>{% endif %}
+<h2>Tasks on this Node</h2>
+{% if tasks %}<div class="table-wrapper"><table><thead><tr><th>Task ID</th><th>Service Name</th><th>Image</th><th>Desired State</th><th>Current State</th><th>Error</th></tr></thead><tbody>
+{% for task in tasks %}<tr><td>{{ task.ID[:12] }}</td><td>{{ task.Name if task.Name else task.ServiceID[:12] }}</td>
+<td>{{ task.Spec.ContainerSpec.Image | truncate(60) if task.Spec and task.Spec.ContainerSpec else 'N/A' }}</td>
+<td>{{ task.DesiredState | capitalize }}</td>
+<td style="color: {{ 'green' if task.Status.State == 'running' else ('orange' if task.Status.State in ['pending', 'starting', 'preparing'] else 'red') }};">
+    {{ task.Status.State | capitalize if task.Status else 'N/A' }}
+    <small>({{ task.Status.Timestamp.split('.')[0] if task.Status and task.Status.Timestamp else '' }})</small>
+</td>
+<td style="color:red;">{{ task.Status.Err if task.Status and task.Status.Err else '-' }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% elif tasks is defined and tasks|length == 0 %}<p>No tasks on this node.</p>
+{% else %}<p>Could not get task info.</p>{% endif %}
+<h2>Actions</h2>
+<div class="actions-form">
+  <p style="margin-bottom: 10px;">Current Availability: <strong style="font-weight: bold;">{{ node.Spec.Availability | capitalize if node.Spec else 'N/A' }}</strong></p>
+  {% if node.Spec and node.ID %}{# Ensure node.Spec and node.ID exist for url_for #}
+    {% if node.Spec.Availability == 'active' %}
+      <form action="{{ url_for('set_node_availability', node_id=node.ID, availability_action='drain') }}" method="post" style="display: inline-block; margin-right: 10px;">
+        <button type="submit" class="action-button drain">Set to Drain</button>
+      </form>
+      <form action="{{ url_for('set_node_availability', node_id=node.ID, availability_action='pause') }}" method="post" style="display: inline-block;">
+        <button type="submit" class="action-button pause">Set to Pause</button>
+      </form>
+    {% elif node.Spec.Availability == 'drain' or node.Spec.Availability == 'pause' %}
+      <form action="{{ url_for('set_node_availability', node_id=node.ID, availability_action='active') }}" method="post" style="display: inline-block;">
+        <button type="submit" class="action-button active">Set to Active</button>
+      </form>
+    {% else %}
+      <p><em>Cannot determine actions for current availability state: {{ node.Spec.Availability }}</em></p>
+    {% endif %}
+  {% else %}
+    <p><em>Node specification or ID not available to determine actions.</em></p>
+  {% endif %}
+</div>
+{% else %}<h2>Node Not Found</h2><p><a href="{{ url_for('dashboard') }}">Return to Dashboard</a>.</p>{% endif %}
+</div><div class="footer"><p>Docker Swarm Dashboard - Node Detail</p></div></body></html>

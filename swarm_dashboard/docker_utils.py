@@ -109,87 +109,128 @@ def scale_service(service_id_or_name, replicas):
         # Docker CLI usually throws an error if scaling fails.
         return True, f"Scale command for service {service_id_or_name} to {replicas_int} replicas executed. Output: {output}"
 
+import time # For sleep in test block
+# json is already imported at the top
+
+def get_node_details(node_id):
+    # Fetches detailed information for a specific node.
+    if not node_id:
+        print("Error: Node ID must be provided for get_node_details.")
+        return None
+    command = f"docker node inspect {node_id} --format '{{{{json .}}}}'"
+    output = run_docker_command(command) # run_docker_command is defined in the existing docker_utils.py
+    if not output:
+        return None
+    try:
+        # docker node inspect with json format returns a list containing a single JSON object
+        node_data_list = json.loads(output)
+        if isinstance(node_data_list, list) and len(node_data_list) > 0:
+            return node_data_list[0] # Return the first element, which is the node's details
+        elif isinstance(node_data_list, dict): # Should not happen with 'docker node inspect' but handle defensively
+             # Warning was removed as this is the actual behavior for single node inspect.
+             return node_data_list
+        print(f"Warning: 'docker node inspect {node_id}' did not return expected JSON list or dict structure. Output: {output}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON for node details ({node_id}): {output}, Error: {e}")
+        return None
+
+def get_tasks_on_node(node_id_or_name):
+    # Fetches tasks running on a specific node.
+    if not node_id_or_name:
+        print("Error: Node ID or name must be provided.")
+        return []
+    command = f"docker node ps {node_id_or_name} --format '{{{{json .}}}}' --no-trunc"
+    output = run_docker_command(command) # run_docker_command is defined in the existing docker_utils.py
+    if not output:
+        return []
+    tasks = []
+    for line in output.splitlines():
+        try:
+            tasks.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON for task on node ({node_id_or_name}): {line}, Error: {e}")
+            # Optionally append an error placeholder if needed by the caller
+            # tasks.append({"ID": "Error", "Name": f"Error parsing task data for node {node_id_or_name}"})
+    return tasks
+
+def update_node_availability(node_id_or_name, availability_action):
+    # Updates the availability of a node (active, pause, drain).
+    if not node_id_or_name:
+        return False, "Node ID or name must be provided."
+    if availability_action not in ["active", "pause", "drain"]:
+        return False, f"Invalid availability action: {availability_action}. Must be 'active', 'pause', or 'drain'."
+
+    command = f"docker node update --availability {availability_action} {node_id_or_name}"
+    # Assuming run_docker_command is defined in the existing part of docker_utils.py
+    output = run_docker_command(command)
+
+    if output is not None:
+        if node_id_or_name in output: # Docker node update returns the node ID/name on success
+            return True, f"Node {node_id_or_name} availability successfully set to {availability_action}."
+        # Fallback if ID not in output but command didn't error (e.g. different Docker versions)
+        return True, f"Node update command for {node_id_or_name} to {availability_action} executed. Output: {output}"
+    else:
+        # run_docker_command prints detailed errors from CalledProcessError or FileNotFoundError
+        return False, f"Failed to set availability for node {node_id_or_name} to {availability_action}."
+
 if __name__ == '__main__':
-    DUMMY_SERVICE_NAME = "test-flask-scaler" # Consistent name
-    print("Fetching services...")
-    services_data = get_services()
-    service_exists = any(s.get("Name") == DUMMY_SERVICE_NAME for s in services_data if isinstance(s, dict))
+    print("--- Testing Docker Utils: update_node_availability ---")
 
-    if not service_exists:
-        print(f"No service named '{DUMMY_SERVICE_NAME}' found. Creating it for testing scaling...")
-        # Create a simple service for testing. 'alpine sleep infinity' is a common choice.
-        # This requires Docker to be running and swarm mode to be initialized.
-        create_output = run_docker_command(f"docker service create --name {DUMMY_SERVICE_NAME} --replicas 1 alpine sleep infinity")
-        if create_output is None:
-            print(f"Failed to create dummy service '{DUMMY_SERVICE_NAME}'. Exiting test logic.")
-            services_data = [] # Ensure we don't proceed if creation failed
-        else:
-            print(f"Dummy service '{DUMMY_SERVICE_NAME}' created. Output: {create_output}")
-            services_data = get_services() # Refresh services list
-    else:
-        print(f"Service '{DUMMY_SERVICE_NAME}' already exists. Proceeding with scaling tests.")
+    # Attempt to get a node ID for testing
+    # Assuming get_nodes() and run_docker_command() are defined in the existing part of docker_utils.py
+    try:
+        nodes_data = get_nodes()
+    except NameError:
+        print("Warning: get_nodes() not found. Test for update_node_availability will be limited.")
+        nodes_data = []
 
-
-    if services_data:
-        for service in services_data:
-            service_id = service.get('ID')
-            service_name = service.get('Name')
-            print(f"  ID: {service_id}, Name: {service_name}, Replicas: {service.get('Replicas')}")
-            if service_id != "Error" and service_name == DUMMY_SERVICE_NAME: # Only test scaling on our dummy service
-                print(f"    Testing scaling for {service_name} (ID: {service_id})...")
-
-                # Scale up
-                print(f"    Scaling {service_name} up to 2 replicas...")
-                success, message = scale_service(service_id, 2)
-                print(f"    Scale up result: {success}, Message: {message}")
-
-                # Verify
-                updated_services = get_services()
-                for s in updated_services:
-                    if s.get('ID') == service_id:
-                        print(f"    New replica count for {s.get('Name')}: {s.get('Replicas')}")
-                        break
-
-                # Scale down
-                print(f"    Scaling {service_name} down to 1 replica...")
-                success, message = scale_service(service_id, 1)
-                print(f"    Scale down result: {success}, Message: {message}")
-
-                updated_services_after_downscale = get_services()
-                for s_down in updated_services_after_downscale:
-                    if s_down.get('ID') == service_id:
-                        print(f"    New replica count for {s_down.get('Name')} after downscale: {s_down.get('Replicas')}")
-                        break
-
-            # Commenting out task listing for brevity in this specific test run focused on scaling
-            # print(f"    Fetching tasks for {service_name}...")
-            # tasks_data = get_service_tasks(service_id)
-            # for task in tasks_data:
-            #     print(f"      Task ID: {task.get('ID')}, Node: {task.get('Node')}, Status: {task.get('CurrentState')}")
-    else:
-        print("Could not fetch services, and failed to create a dummy service.")
-
-    print("\nFetching nodes...")
-    nodes_data = get_nodes()
+    test_node_id = None
     if nodes_data:
         for node in nodes_data:
-            print(f"  ID: {node.get('ID')}, Hostname: {node.get('Hostname')}, Status: {node.get('Status')}, Availability: {node.get('Availability')}")
-    else:
-        print("Could not fetch nodes.")
+            if isinstance(node, dict) and node.get('ID') and node.get('ID') != "Error": # Ensure ID is valid and node is a dict
+                test_node_id = node.get('ID')
+                break
 
-    # Clean up the dummy service
-    print(f"\nCleaning up dummy service '{DUMMY_SERVICE_NAME}'...")
-    # It's important that run_docker_command can handle commands that don't return much output on success
-    cleanup_output = run_docker_command(f"docker service rm {DUMMY_SERVICE_NAME}")
-    if cleanup_output is not None: # Check if command execution itself had an issue
-        # Docker service rm output is the service name if successful.
-        if DUMMY_SERVICE_NAME in cleanup_output:
-            print(f"Dummy service '{DUMMY_SERVICE_NAME}' removal command executed successfully. Output: {cleanup_output}")
-        else:
-            # If the service was already gone or another issue occurred, output might not contain the name.
-            # run_docker_command prints Stderr in case of CalledProcessError, so that would be visible.
-            print(f"Dummy service '{DUMMY_SERVICE_NAME}' removal command executed. Output: {cleanup_output} (check if service was actually removed if error expected)")
+    if not test_node_id: # Fallback if get_nodes didn't yield an ID
+        print("No suitable node found from get_nodes(). Attempting direct fetch for testing...")
+        raw_node_ls_output = run_docker_command("docker node ls --format '{{.ID}}' | head -n 1")
+        if raw_node_ls_output:
+            test_node_id = raw_node_ls_output.strip()
+
+    if test_node_id:
+        print(f"--- Testing availability updates with Node ID: {test_node_id} ---")
+
+        # Assuming get_node_details is defined from previous step
+        try:
+            node_details_before = get_node_details(test_node_id)
+            original_availability = "unknown"
+            if node_details_before and isinstance(node_details_before, dict) and node_details_before.get('Spec'):
+                original_availability = node_details_before.get('Spec', {}).get('Availability', 'unknown')
+            print(f"  Initial availability of node {test_node_id}: {original_availability}")
+
+            target_availability_action = 'drain'
+            if original_availability == 'drain': # If already drained, try to activate
+                target_availability_action = 'active'
+
+            print(f"  Attempting to set node {test_node_id} to '{target_availability_action}'...")
+            success, msg = update_node_availability(test_node_id, target_availability_action)
+            print(f"  Update to '{target_availability_action}' result: {success} - {msg}")
+
+            if success and original_availability != 'unknown' and original_availability.lower() != target_availability_action.lower() : # try to revert if changed, case-insensitive compare
+                time.sleep(1) # Give Docker a moment
+                print(f"  Attempting to revert node {test_node_id} to original availability '{original_availability}'...")
+                success_revert, msg_revert = update_node_availability(test_node_id, original_availability)
+                print(f"  Revert to '{original_availability}' result: {success_revert} - {msg_revert}")
+        except NameError:
+            print("Warning: get_node_details() not found. Cannot fully test availability state changes.")
+            # Basic test without checking state before/after
+            success, msg = update_node_availability(test_node_id, "drain") # try draining
+            print(f"  Update to 'drain' (basic test): {success} - {msg}")
+            if success: # try to activate back
+                update_node_availability(test_node_id, "active")
     else:
-        # This implies run_docker_command itself failed (e.g. docker not found, or permissions if not handled before)
-        # or it returned None due to CalledProcessError and printed the error.
-        print(f"Failed to execute dummy service '{DUMMY_SERVICE_NAME}' removal command or command failed.")
+        print("No Node ID found. Cannot test 'update_node_availability'.")
+        print("Please ensure Docker Swarm is initialized and has at least one node.")
+
+    print("--- Docker Utils Test for update_node_availability complete ---")

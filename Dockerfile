@@ -31,10 +31,11 @@ COPY ./swarm_dashboard /app
 EXPOSE 5000
 
 # 6. Define environment variables
-ENV FLASK_ENV production # Explicitly set for production
-ENV FLASK_APP app.py
-ENV FLASK_RUN_HOST 0.0.0.0
-ENV FLASK_DEBUG 0
+# Explicitly set for production
+ENV FLASK_ENV=production
+ENV FLASK_APP=app.py
+ENV FLASK_RUN_HOST=0.0.0.0
+ENV FLASK_DEBUG=0
 
 # 7. Run app.py when the container launches
 CMD ["python", "app.py"]
